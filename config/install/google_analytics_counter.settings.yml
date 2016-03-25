@@ -1,0 +1,26 @@
+google_analytics_counter:
+  access_token: ''
+  cache_length: 86400
+  date_cycle: 0
+  dayquota:
+    - 0
+    - 0
+  expires_at: null
+  refresh_token: ''
+  client_id: ''
+  client_secret: ''
+  redirect_uri: null
+  profile_id: 0
+  redirect_host: ''
+  cron_interval: 30
+  cron_next_execution: 0
+  totalhits: 0
+  totalpaths: 0
+  totalnodes: 0
+  storage: 0
+  api_dayquota: 10000
+  chunk_process_time: 0
+  chunk_node_process_time: 0
+  chunk_to_fetch: 1000
+  data_step: 0
+  node_data_step: 0

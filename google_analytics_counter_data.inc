@@ -5,125 +5,144 @@
  * Parsing and writing the fetched data.
  */
 
+use Drupal\Component\Utility\SafeMarkup;
+
 /**
  * Find how many distinct paths does Google Analytics have for this profile. This function is triggered by hook_cron().
  */
 function google_analytics_counter_update_path_counts() {
+  $config = \Drupal::config('google_analytics_counter.settings');
+  $configEdit = \Drupal::configFactory()->getEditable('google_analytics_counter.settings');
 
   // Record how long did this chunk take to process.
   $chunkprocessbegin = time();
 
   // Needing to stay under the Google Analytics API quota, let's count how many API retrievals were made in the last 24 hours.
   // @todo We should better take into consideration that the quota is reset at midnight PST (note: time() always returns UTC).
-  $dayquota = variable_get('google_analytics_counter_dayquota', array(0, 0));
+  $dayquota = $config->get('google_analytics_counter.dayquota');
   if (REQUEST_TIME - $dayquota[0] >= 86400) {
     // If last API request was more than a day ago, set monitoring time to now.
     $dayquota[0] = REQUEST_TIME;
     $dayquota[1] = 0;
-    variable_set('google_analytics_counter_dayquota', array($dayquota[0], $dayquota[1]));
+    \Drupal::configFactory()
+      ->getEditable('google_analytics_counter.settings')
+      ->set('google_analytics_counter_dayquota', array(
+        $dayquota[0],
+        $dayquota[1]
+      ))
+      ->save();
   }
-  //dpm($dayquota);
   // Are we over the GA API limit?
-  $maxdailyrequests = variable_get('google_analytics_counter_api_dayquota', 10000); // See http://code.google.com/apis/analytics/docs/gdata/gdataDeveloperGuide.html#quota
+  // See http://code.google.com/apis/analytics/docs/gdata/gdataDeveloperGuide.html#quota
+  $maxdailyrequests = $config->get('google_analytics_counter.api_dayquota');
   if ($dayquota[1] > $maxdailyrequests) {
-    watchdog('Google Analytics Counter', t('Google Analytics API quota of %maxdailyrequests requests has been reached. Will NOT fetch data from Google Analytics for the next %dayquota seconds. See <a href="/admin/config/system/google_analytics_counter">the Google Analytics Counter settings page</a> for more info.', array('%maxdailyrequests' => check_plain($maxdailyrequests), '%dayquota' => check_plain(($dayquota[0]+86400-REQUEST_TIME)))), NULL, WATCHDOG_ERROR);
+    \Drupal::logger(t('Google Analytics Counter')->render())
+      ->error(t('Google Analytics API quota of %maxdailyrequests requests has been reached. Will NOT fetch data from Google Analytics for the next %dayquota seconds. See <a href="/admin/config/system/google_analytics_counter">the Google Analytics Counter settings page</a> for more info.', array(
+        '%maxdailyrequests' => SafeMarkup::checkPlain($maxdailyrequests),
+        '%dayquota' => SafeMarkup::checkPlain(($dayquota[0] + 86400 - REQUEST_TIME))
+      ))->render(), []);
     return;
   }
 
   // How many results to ask from GA in one request. Default on 1000 to fit most systems (for example those with no external cron).
-  $chunk = variable_get('google_analytics_counter_chunk_to_fetch', 1000);
+  $chunk = $config->get('google_analytics_counter.chunk_to_fetch');
   // In case there are more than $chunk path/counts to retrieve from GA, do just one chunk at a time and register that in $step.
-  $step = variable_get('google_analytics_counter_data_step', 0);
+  $step = $config->get('google_analytics_counter.data_step');
   // Which GA result to look for first. Must be between 1 - infinity.
-  $pointer = $step*$chunk+1;
-  //dpm('START chunk '.$chunk);
-  //dpm('START step '.$step);
-  //dpm('START pointer '.$pointer);
-  if (variable_get('google_analytics_counter_advanced_date_checkbox') == 1) {
-    $start_date = variable_get('google_analytics_counter_fixed_start_date', '2005-01-01');
-  }else {
-    $start_date = variable_get('google_analytics_counter_variable_start_date', '2005-01-01');
-  }
+  $pointer = $step * $chunk + 1;
 
   // The earliest valid start-date for Google Analytics is 2005-01-01.
+  $date_cycle = $config->get('google_analytics_counter.date_cycle');
+  $start_date = $date_cycle == 0
+    ? strtotime('2015-01-01') : strtotime(date('Y-m-d', time())) - $date_cycle;
   $request = array(
-    'dimensions' => array('ga:pagePath'), // date would not be necessary for totals, but we also calculate stats of views per day, so we need it
+    'dimensions' => array('ga:pagePath'),
+    // date would not be necessary for totals, but we also calculate stats of views per day, so we need it
     'metrics' => array('ga:pageviews'),
-    'start_date' => strtotime($start_date),
-    'end_date' => strtotime('tomorrow'), // Using 'tomorrow' to offset any timezone shift between the hosting and Google servers.
+    'start_date' => $start_date,
+    'end_date' => strtotime('tomorrow'),
+    // Using 'tomorrow' to offset any timezone shift between the hosting and Google servers.
     'start_index' => $pointer,
     'max_results' => $chunk,
-    //'filters' => 'ga:pagePath==/node/3',
-    //'#start_date' => strtotime('2005-01-01'), // We want to retrieve all page views for this path. The earliest valid start-date for Google Analytics is 2005-01-01.
-    //'sort_metric' => array('ga:date'),
   );
-  //dpm($start_date);
 
-  $resultcount = FALSE;
   $cachehere = array(
     'cid' => 'google_analytics_counter_' . md5(serialize($request)),
     'expire' => google_analytics_counter_cache_time(),
-      'refresh' => FALSE,
-      );
+    'refresh' => FALSE,
+  );
   $new_data = @google_analytics_counter_report_data($request, $cachehere);
 
   if (!$new_data->fromCache) { // Don't write anything to google_analytics_counter if this GA data comes from cache (would be writing the same again).
 
     // This was a live request. Increase the GA request limit tracker.
-    variable_set('google_analytics_counter_dayquota', array($dayquota[0], ($dayquota[1]+1)));
+    $configEdit->set('google_analytics_counter_dayquota', array(
+      $dayquota[0],
+      ($dayquota[1] + 1)
+    ))
+      ->save();
 
     if (!empty($new_data->error)) { // If NULL then there is no error.
-      watchdog('Google Analytics Counter', t('Problem fetching data from Google Analytics: %new_dataerror. Did you authenticate any Google Analytics profile? See <a href="/admin/config/system/google_analytics_counter/authentication">here</a>.', array('%new_dataerror' => $new_data->error)), NULL, WATCHDOG_ERROR);
+      \Drupal::logger(t('Google Analytics Counter'))
+        ->error(t('Problem fetching data from Google Analytics: %new_dataerror. Did you authenticate any Google Analytics profile? See <a href="/admin/config/system/google_analytics_counter/authentication">here</a>.', array('%new_dataerror' => $new_data->error)), []);
       // Nothing to do; return.
-      //return;
     }
     else {
       $resultsretrieved = $new_data->results->rows;
       foreach ($resultsretrieved as $val) {
-
         // http://drupal.org/node/310085
         db_merge('google_analytics_counter')
-        ->key(array('pagepath_hash' => md5($val['pagePath'])))
-        ->fields(array(
-          'pagepath' => check_plain(utf8_encode($val['pagePath'])), // check_plain: https://www.drupal.org/node/2381703 // utf8_encode: https://www.drupal.org/node/2382319
-          'pageviews' => check_plain($val['pageviews']), // check_plain: https://www.drupal.org/node/2381703
+          ->key(array('pagepath_hash' => md5($val['pagePath'])))
+          ->fields(array(
+            'pagepath' => SafeMarkup::checkPlain($val['pagePath']),
+            // Added check_plain; see https://www.drupal.org/node/2381703
+            'pageviews' => SafeMarkup::checkPlain($val['pageviews']),
+            // Added check_plain; see https://www.drupal.org/node/2381703
           ))
-        ->execute();
-
+          ->execute();
       }
     }
-
   }
 
   // The total number of records for this profile.
   $resultcount = @$new_data->results->totalResults;
-  // Store it in a variable.
-  variable_set('google_analytics_counter_totalpaths', $resultcount);
-
   // The total number of hits for all records for this profile.
   $totalhits = @$new_data->results->totalsForAllResults['pageviews'];
-  variable_set('google_analytics_counter_totalhits', $totalhits);
-  //dpm('totalhits: '.$totalhits);
+
+  // Store it in a variable.
+  $configEdit->set('google_analytics_counter.totalpaths', $resultcount)
+    ->set('google_analytics_counter.totalhits', $totalhits)
+    ->save();
 
   // Set the pointer.
   $pointer += $chunk;
 
-  //dpm('step: '.$step.' | '.$pointer . ' out of total ' .$resultcount);
-  watchdog('Google Analytics Counter', t('Retrieved %sizeof items from Google Analytics data for paths %first-%second.', array('%sizeof' => sizeof(@$new_data->results->rows), '%first' => ($pointer-$chunk), '%second' => ($pointer-$chunk-1+sizeof(@$new_data->results->rows)))), NULL, WATCHDOG_INFO);
+  \Drupal::logger(t('Google Analytics Counter')->render())
+    ->info(t('Retrieved %sizeof items from Google Analytics data for paths %first-%second.', array(
+      '%sizeof' => sizeof(@$new_data->results->rows),
+      '%first' => ($pointer - $chunk),
+      '%second' => ($pointer - $chunk - 1 + sizeof(@$new_data->results->rows))
+    ))->render()
+    );
 
   // OK now increase or zero $step
   if ($pointer <= $resultcount) {
     // If there are more results than what we've reached with this chunk, increase step to look further during the next run.
-    $newstep = $step+1;
+    $newstep = $step + 1;
   }
   else {
     $newstep = 0;
   }
-  //dpm('newstep: '.$newstep);
-  variable_set('google_analytics_counter_data_step', $newstep);
+  \Drupal::configFactory()
+    ->getEditable('google_analytics_counter.settings')
+    ->set('google_analytics_counter.data_step', $newstep)
+    ->save();
 
   // Record how long did this chunk take to process.
-  variable_set('google_analytics_counter_chunk_process_time', time()-$chunkprocessbegin);
+  \Drupal::configFactory()
+    ->getEditable('google_analytics_counter.settings')
+    ->set('google_analytics_counter.chunk_process_time', time() - $chunkprocessbegin)
+    ->save();
 
 }
 
@@ -131,143 +150,130 @@ function google_analytics_counter_update_path_counts() {
  * Calculate pageviews for one path (with any aliases).
  */
 function google_analytics_counter_get_sum_per_path($path, $cacheon = TRUE) {
-
-  //dpm('==============================================================');
-  //dpm('requested path: '.$path);
-
   // Recognize special path 'all' to get the sum of all pageviews for the profile.
   if ($path == 'all') {
-    //dpm('yep: '.variable_get('google_analytics_counter_totalhits', 0));
-    return variable_get('google_analytics_counter_totalhits', 0);
+    return \Drupal::config('google_analytics_counter.settings')
+      ->get('google_analytics_counter.totalhits');
   }
 
-  $path = check_plain($path); // Esp. in case function is called directly.
+  // Esp. in case function is called directly.
+  $path = SafeMarkup::checkPlain($path);
 
   // Remove initial slash, if any.
-  if (substr($path, 0, 1) == '/') $path = substr($path, 1);
-  //dpm($path);
+  if (substr($path, 0, 1) == '/') {
+    $path = substr($path, 1);
+  }
 
   // Get list of allowed languages to detect front pages such as http://mydomain.tld/en
   // Must come AFTER the possible initial slash is removed!
-  $langs = language_list();
+  $langs = \Drupal::languageManager()->getLanguages();
   $frontpages = array();
-  foreach($langs as $lang=>$object){
+  foreach ($langs as $lang => $object) {
     $frontpages[] = $lang;
   }
   $frontpages[] = '';
   $frontpages[] = '/';
-  //dpm($frontpages);
+
   if (in_array($path, $frontpages)) {
-    // This is the home page!
-    $path = variable_get('site_frontpage', 'node');
+    $path = \Drupal::config('system.site')->get('page.front');
   }
 
-  //If it's a node we'll distinguish the language part of it, if any. Either format en/node/55 or node/55.
+  // If it's a node we'll distinguish the language part of it, if any.
+  // Either format en/node/55 or node/55.
   $path_no_slashes_at_ends = trim($path, '/');
   $splitpath = explode('/', $path_no_slashes_at_ends);
-  //dpm($splitpath);
   $lang_prefix = '';
-  if (
-      (sizeof($splitpath) == 3 AND strlen($splitpath[0]) == 2 AND $splitpath[1] == 'node' AND is_numeric($splitpath[2]))
-      OR
-      (sizeof($splitpath) == 2 AND $splitpath[0] == 'node' AND is_numeric($splitpath[1]))
-     ){
+  if ((sizeof($splitpath) == 3 AND strlen($splitpath[0]) == 2
+      AND $splitpath[1] == 'node' AND is_numeric($splitpath[2]))
+    OR
+    (sizeof($splitpath) == 2 AND $splitpath[0] == 'node' AND is_numeric($splitpath[1]))
+  ) {
     if (sizeof($splitpath) == 3) {
       $nidhere = $splitpath[2];
     }
-    else if (sizeof($splitpath) == 2) {
-      $nidhere = $splitpath[1];
+    else {
+      if (sizeof($splitpath) == 2) {
+        $nidhere = $splitpath[1];
+      }
     }
     $dbresults = db_select('node', 'n')
-      ->fields('n', array('nid','language'))
+      ->fields('n', array('nid', 'langcode'))
       ->condition('nid', $nidhere, '=')
       ->execute();
     foreach ($dbresults as $dbresult) {
-      //dpm($dbresult->language);
-      if ($dbresult->language <> 'und' AND $dbresult->language <> '') {
-        $lang_prefix = $dbresult->language.'/';
+      if ($dbresult->langcode <> 'und' AND $dbresult->langcode <> '') {
+        $lang_prefix = $dbresult->langcode . '/';
         // If this is a language-prefixed node we need its path without the prefix for later.
-        if (sizeof($splitpath) == 3){
-          $path = $splitpath[1].'/'.$splitpath[2];
+        if (sizeof($splitpath) == 3) {
+          $path = $splitpath[1] . '/' . $splitpath[2];
         }
       }
       break; // Is just 1 result anyway.
     }
-    //dpm('detected NODE path: '.$path);
-    //dpm('detected NODE prefix: '.$lang_prefix);
   }
 
   //Now if it's a node but has a prefixed or unprefixed alias, e.g. en/my/path or my/path, we should also try to determine if it's a node and then count it's node/nid with it!
-  if ($lang_prefix == ''){
-    if (sizeof($splitpath) > 1 AND strlen($splitpath[0]) == 2 AND !is_numeric($splitpath[0])){ // E.g. en/view or nl/my/view or xx/view
+  if ($lang_prefix == '') {
+    if (sizeof($splitpath) > 1 AND strlen($splitpath[0]) == 2 AND !is_numeric($splitpath[0])) { // E.g. en/view or nl/my/view or xx/view
       // Now we need to find which nid does it correspond (the language prefix + the alias)
       $withoutprefix = $splitpath;
       $lang = array_shift($withoutprefix);
       $withoutprefix = implode('/', $withoutprefix);
-     //dpm('withoutprefix: '.$withoutprefix);
-      $nodepath = drupal_lookup_path('source', $withoutprefix);
-     //dpm('system path for alias: '.$nodepath);
+      $nodepath = \Drupal::service('path.alias_manager')
+        ->getPathByAlias($withoutprefix);
       if ($nodepath !== FALSE) {
         $path = $nodepath;
-        $lang_prefix = $lang.'/';
+        $lang_prefix = $lang . '/';
       }
-      //dpm('detected ALIAS path: '.$path);
-      //dpm('detected ALIAS prefix: '.$lang_prefix);
     }
   }
 
   //Now, it's also possible that it's a node alias but without prefix! E.g. my/path but in fact it's en/node/nid!
-  if ($lang_prefix == ''){
+  if ($lang_prefix == '') {
     $path_no_slashes_at_ends = trim($path, '/');
-    $nodepath = drupal_lookup_path('source', $path_no_slashes_at_ends);
-    //dpm('path_no_slashes_at_ends: '.$path_no_slashes_at_ends);
-    //dpm('nodepath: '.$nodepath);
+    $nodepath = \Drupal::service('path.alias_manager')
+      ->getPathByAlias($path_no_slashes_at_ends);
     if ($nodepath !== FALSE) {
       $path = $nodepath;
       $splitnodepath = explode('/', $nodepath);
-      if (sizeof($splitnodepath) == 2 AND $splitnodepath[0] == 'node' AND is_numeric($splitnodepath[1])){
+      if (sizeof($splitnodepath) == 2 AND $splitnodepath[0] == 'node' AND is_numeric($splitnodepath[1])) {
         $dbresults = db_select('node', 'n')
-          ->fields('n', array('nid','language'))
+          ->fields('n', array('nid', 'langcode'))
           ->condition('nid', $splitnodepath[1], '=')
           ->execute();
         foreach ($dbresults as $dbresult) {
-          //dpm($dbresult->language);
-          if ($dbresult->language <> 'und' AND $dbresult->language <> '') {
-            $lang_prefix = $dbresult->language.'/';
+          if ($dbresult->langcode <> 'und' AND $dbresult->langcode <> '') {
+            $lang_prefix = $dbresult->langcode . '/';
           }
           break; // Is just 1 result anyway.
         }
         //$lang_prefix = $lang.'/';
       }
-      //dpm('detected NODE path from ALIAS: '.$path);
-      //dpm('detected NODE prefix from ALIAS: '.$lang_prefix);
     }
   }
 
   // But it also could be a redirect path!
-  if (function_exists('redirect_load_by_source')){
+  // @todo The module don't has drupal 8 revision.
+  if (function_exists('redirect_load_by_source')) {
     $path_no_slashes_at_ends = trim($path, '/');
     $redirect_object = redirect_load_by_source($path_no_slashes_at_ends, $GLOBALS['language']->language, drupal_get_query_parameters());
-    //dpm($redirect_object);
-    if (is_object($redirect_object)){
-      //dpm('gotten from redirect object: '.$redirect_object->redirect);
-      if (is_string($redirect_object->redirect)){
+    if (is_object($redirect_object)) {
+      if (is_string($redirect_object->redirect)) {
         $path = $redirect_object->redirect;
       }
-      if (is_string($redirect_object->language)){
-        $lang_prefix = $redirect_object->language.'/';
+      if (is_string($redirect_object->language)) {
+        $lang_prefix = $redirect_object->language . '/';
       }
-      //dpm('detected NODE path from REDIRECT: '.$path);
-      //dpm('detected NODE prefix from REDIRECT: '.$lang_prefix);
     }
   }
 
   // All right, finally we can calculate the sum of pageviews. This process is cached.
-  $cacheid = md5($lang_prefix.$path);
+  $cacheid = md5($lang_prefix . $path);
   // $cacheon = FALSE; // Useful for debugging.
-  if ($cache = cache_get('google_analytics_counter_page_' . $cacheid) AND $cacheon) {
+  if ($cache = \Drupal::cache()
+      ->get('google_analytics_counter_page_' . $cacheid) AND $cacheon
+  ) {
     $sum_of_pageviews = $cache->data;
-    //dpm('CACHED');
   }
   else {
     // Get pageviews for this path and all its aliases.
@@ -276,75 +282,70 @@ function google_analytics_counter_get_sum_per_path($path, $cacheon = TRUE) {
      * Remove a trailing slash (e.g. from node/3/) otherwise _google_analytics_counter_path_aliases() does not find anything.
      */
     $path_no_slashes_at_ends = trim($path, '/');
-    //dpm('path_no_slashes_at_ends: '.$path_no_slashes_at_ends);
     $unprefixedaliases = _google_analytics_counter_path_aliases($path_no_slashes_at_ends);
-    //dpm('unprefixedaliases:');
-    //dpm($unprefixedaliases);
     $allpaths = array();
     $allpaths_dpm = array();
     foreach ($unprefixedaliases as $val) {
       // Google Analytics stores initial slash as well, so let's prefix them.
-      $allpaths[] = md5('/'.$lang_prefix.$val); // With language prefix, if available, e.g. /en/node/55
-      $allpaths_dpm[] = '/'.$lang_prefix.$val;
+      $allpaths[] = md5('/' . $lang_prefix . $val); // With language prefix, if available, e.g. /en/node/55
+      $allpaths_dpm[] = '/' . $lang_prefix . $val;
       // And its variant with trailing slash (https://www.drupal.org/node/2396057)
-      $allpaths[] = md5('/'.$lang_prefix.$val.'/'); // With language prefix, if available, e.g. /en/node/55
-      $allpaths_dpm[] = '/'.$lang_prefix.$val.'/';
-      if ($lang_prefix <> ''){
+      $allpaths[] = md5('/' . $lang_prefix . $val . '/'); // With language prefix, if available, e.g. /en/node/55
+      $allpaths_dpm[] = '/' . $lang_prefix . $val . '/';
+      if ($lang_prefix <> '') {
         // Now, if we are counting NODE with language prefix, we also need to count the pageviews for that node without the prefix -- it could be that before it had no language prefix but it still was the same node!
         // BUT this will not work for non-nodes, e.g. views. There we depend on the path e.g. /en/myview because it would be tricky to get a valid language prefix out of the path. E.g. /en/myview could be a path of a view where "en" does not mean the English language. In other words, while prefix before node/id does not change the page (it's the same node), with views or other custom pages the prefix may actually contain completely different content.
-        $allpaths[] = md5('/'.$val);
-        $allpaths_dpm[] = '/'.$val;
+        $allpaths[] = md5('/' . $val);
+        $allpaths_dpm[] = '/' . $val;
         // And its variant with trailing slash (https://www.drupal.org/node/2396057)
-        $allpaths[] = md5('/'.$val.'/');
-        $allpaths_dpm[] = '/'.$val.'/';
+        $allpaths[] = md5('/' . $val . '/');
+        $allpaths_dpm[] = '/' . $val . '/';
         // @TODO ... obviously, here we should treat the possibility of the NODE/nid having a different language prefix. A niche case (how often do existing NODES change language?)
       }
     }
 
     // Find possible redirects for this path using redirect_load_multiple() from module Redirect http://drupal.org/project/redirect
-    if (function_exists('redirect_load_multiple')){
+    // @todo Redirect module is currently being ported to Drupal 8,
+    // @todo but is not usable yet.
+    if (function_exists('redirect_load_multiple')) {
       $path_no_slashes_at_ends = trim($path, '/');
       $redirectobjects = redirect_load_multiple(FALSE, array('redirect' => $path_no_slashes_at_ends));
-      foreach($redirectobjects as $redirectobject){
-        $allpaths[] = md5('/'.$redirectobject->source);
-        $allpaths_dpm[] = '/'.$redirectobject->source;
+      foreach ($redirectobjects as $redirectobject) {
+        $allpaths[] = md5('/' . $redirectobject->source);
+        $allpaths_dpm[] = '/' . $redirectobject->source;
         // And its variant with trailing slash (https://www.drupal.org/node/2396057)
-        $allpaths[] = md5('/'.$redirectobject->source.'/');
-        $allpaths_dpm[] = '/'.$redirectobject->source.'/';
-        $allpaths[] = md5('/'.$redirectobject->language.'/'.$redirectobject->source);
-        $allpaths_dpm[] = '/'.$redirectobject->language.'/'.$redirectobject->source;
+        $allpaths[] = md5('/' . $redirectobject->source . '/');
+        $allpaths_dpm[] = '/' . $redirectobject->source . '/';
+        $allpaths[] = md5('/' . $redirectobject->language . '/' . $redirectobject->source);
+        $allpaths_dpm[] = '/' . $redirectobject->language . '/' . $redirectobject->source;
         // And its variant with trailing slash (https://www.drupal.org/node/2396057)
-        $allpaths[] = md5('/'.$redirectobject->language.'/'.$redirectobject->source.'/');
-        $allpaths_dpm[] = '/'.$redirectobject->language.'/'.$redirectobject->source.'/';
+        $allpaths[] = md5('/' . $redirectobject->language . '/' . $redirectobject->source . '/');
+        $allpaths_dpm[] = '/' . $redirectobject->language . '/' . $redirectobject->source . '/';
       }
     }
 
-    // Very useful for debugging. In face each variant: node/NID, alias, redirect, non-node ... with or without trailing slash, with or without language ... should always give the same count (sum of counts of all path variants).
-    //dpm('allpaths_dpm:');
-    //dpm($allpaths_dpm);
+    // Very useful for debugging. In face each variant: node/NID, alias,
+    // redirect, non-node ... with or without trailing slash,
+    // with or without language ... should always give the same count
+    // (sum of counts of all path variants).
 
     // Get path counts for each of the path aliases.
-    // Search hash values of path -- faster (primary key). E.g. SELECT pageviews FROM `google_analytics_counter` where pagepath_hash IN ('ee1c787bc14bec9945de3240101e919c', 'd884e66c2316317ef6294dc12aca9cef')
+    // Search hash values of path -- faster (primary key). E.g.
+    // SELECT pageviews FROM `google_analytics_counter` where pagepath_hash
+    // IN ('ee1c787bc14bec9945de3240101e919c', 'd884e66c2316317ef6294dc12aca9cef')
     $pathcounts = db_select('google_analytics_counter', 'gac')
-    //->fields('gac', array('pagepath', 'pageviews'))
-    ->fields('gac', array('pageviews'))
-    //->condition('pagepath', array('/bg', '/node/3'), 'IN')
-    ->condition('pagepath_hash', $allpaths, 'IN')
-    ->execute();
-    //dpm($pathcounts);
+      ->fields('gac', array('pageviews'))
+      ->condition('pagepath_hash', $allpaths, 'IN')
+      ->execute();
     $sum_of_pageviews = 0;
     foreach ($pathcounts as $pathcount) {
-    //dpm($pathcount);
-    //dpm('partial: '.$pathcount->pageviews);
       $sum_of_pageviews += $pathcount->pageviews;
     }
-    //dpm('sum: '.$sum_of_pageviews);
 
-    cache_set('google_analytics_counter_page_' . $cacheid, $sum_of_pageviews, 'cache', CACHE_TEMPORARY);
-    //dpm('UNCACHED');
+    \Drupal::cache()
+      ->set('google_analytics_counter_page_' . $cacheid, $sum_of_pageviews);
   }
 
-  //dpm('total sum: '.$sum_of_pageviews);
   return $sum_of_pageviews;
 }
 
@@ -353,19 +354,23 @@ function google_analytics_counter_get_sum_per_path($path, $cacheon = TRUE) {
  */
 function _google_analytics_counter_path_aliases($node_path) {
 
-  // Get the normal node path if it is a node.
-  $node_path = drupal_get_normal_path($node_path);
-  //dpm('nodepath: '.$node_path);
+  // Get the normal node path if it is a node.]
+  $node_path = \Drupal::service('path.alias_manager')
+    ->getPathByAlias($node_path);
 
   // Grab all aliases.
   $aliases = array($node_path);
-  $result = db_query("SELECT * FROM {url_alias} WHERE source = :source", array(':source' => $node_path));
+
+  $result = db_query("SELECT * FROM {url_alias} WHERE source = :source", array(':source' => $node_path))->fetchAll();
   foreach ($result as $row) {
     $aliases[] = $row->alias;
   }
 
-  // If this is the front page, add the base path too, and index.php for good measure. There may be other ways that the user is accessing the front page but we can't account for them all.
-  if ($node_path == variable_get('site_frontpage', 'node')) {
+  // If this is the front page, add the base path too,
+  // and index.php for good measure.
+  // There may be other ways that the user is accessing the front page
+  // but we can't account for them all.
+  if ($node_path == \Drupal::config('system.site')->get('page.front')) {
     $aliases[] = '';
     $aliases[] = '/';
     $aliases[] = 'index.php';
@@ -398,8 +403,9 @@ function _google_analytics_counter_path_aliases($node_path) {
 function google_analytics_counter_report_data($params = array(), $cache_options = array()) {
 
   $params_defaults = array(
-    'profile_id' => 'ga:' . variable_get('google_analytics_counter_profile_id', 0),
-    );
+    'profile_id' => 'ga:' . \Drupal::config('google_analytics_counter.settings')
+        ->get('google_analytics_counter.profile_id'),
+  );
 
   $params += $params_defaults;
 
@@ -414,8 +420,12 @@ function google_analytics_counter_report_data($params = array(), $cache_options 
  * Get pageviews for nodes and write them either to the Drupal core table node_counter, or to the google_analytics_counter_storage table. This function is triggered by hook_cron().
  */
 function google_analytics_counter_update_storage() {
-
-  if(variable_get('google_analytics_counter_storage', 0) == 0 && module_exists('statistics')){ // See also https://www.drupal.org/node/2275575
+  $configEdit = \Drupal::configFactory()
+    ->getEditable('google_analytics_counter.settings');
+  if (\Drupal::config('google_analytics_counter.settings')
+      ->get('google_analytics_counter.storage') == 0 && \Drupal::moduleHandler()
+      ->moduleExists('statistics')
+  ) { // See also https://www.drupal.org/node/2275575
     // Using core node_counter table.
     $storage = 'node_counter';
   }
@@ -424,49 +434,46 @@ function google_analytics_counter_update_storage() {
     $storage = 'google_analytics_counter_storage';
   }
 
-    // Record how long did this chunk take to process.
+  // Record how long did this chunk take to process.
   $chunkprocessbegin = time();
-  //dpm($chunkprocessbegin);
 
   // The total number of nodes.
-  $dbresult = db_select('node', 'n')
-  ->fields('n')
-  ->execute();
-  $resultcount = $dbresult->rowCount();
-  //dpm('totalnodes: '.$resultcount);
+  $resultcount = db_select('node', 'n')
+    ->fields('n')
+    ->countQuery()
+    ->execute()
+    ->fetchField();
   // Store it in a variable.
-  variable_set('google_analytics_counter_totalnodes', $resultcount);
+  $configEdit->set('google_analytics_counter.totalnodes', $resultcount)
+    ->save();
 
   // How many node counts to update one cron run.
   // We use the same chunk size as when getting paths in google_analytics_counter_update_path_counts().
-  $chunk = variable_get('google_analytics_counter_chunk_to_fetch', 1000);
+  $chunk = \Drupal::config('google_analytics_counter.settings')
+    ->get('google_analytics_counter.chunk_to_fetch');
   // In case there are more than $chunk nodes to process, do just one chunk at a time and register that in $step.
-  $step = variable_get('google_analytics_counter_node_data_step', 0);
+  $step = \Drupal::config('google_analytics_counter.settings')
+    ->get('google_analytics_counter.node_data_step');
   // Which node to look for first. Must be between 0 - infinity.
-  $pointer = $step*$chunk;
-  //dpm('START chunk '.$chunk);
-  //dpm('START step '.$step);
-  //dpm('START pointer '.$pointer);
+  $pointer = $step * $chunk;
 
   $dbresults = db_select('node', 'n')
-  //->fields('n', array('nid','language'))
-  ->fields('n', array('nid'))
-  //->condition('pagepath', 'node/%', 'LIKE')
-  ->range($pointer, $chunk)
-  ->execute();
+    ->fields('n', array('nid'))
+    ->range($pointer, $chunk)
+    ->execute();
   foreach ($dbresults as $dbresult) {
-
-    $path = 'node/'.$dbresult->nid;
-   //dpm($path);
+    $path = 'node/' . $dbresult->nid;
 
     // Get the count for this node (uncached)
     $sum_of_pageviews = google_analytics_counter_get_sum_per_path($path, FALSE);
 
     // Don't write zeroes.
-    if ($sum_of_pageviews == 0) continue;
+    if ($sum_of_pageviews == 0) {
+      continue;
+    }
 
     // Write the count to the current storage table
-    if ($storage == 'node_counter'){
+    if ($storage == 'node_counter') {
       db_merge('node_counter')
         ->key(array('nid' => $dbresult->nid))
         ->fields(array(
@@ -484,30 +491,29 @@ function google_analytics_counter_update_storage() {
         ))
         ->execute();
     }
-
   }
 
   // Set the pointer.
   $pointer += $chunk;
-  //dpm('END pointer: '.$pointer);
 
-  //dpm('step: '.$step.' | '.$pointer . ' out of total ' .$resultcount);
-  watchdog('Google Analytics Counter', t('Attempted updating %dbresults records in table '.$storage.' from Google Analytics data %first-%second.', array('%dbresults' => $dbresults->rowCount(), '%first' => ($pointer-$chunk+1), '%second' => ($pointer-$chunk+$dbresults->rowCount()))), NULL, WATCHDOG_INFO);
+  \Drupal::logger(t('Google Analytics Counter')->render())
+    ->info(t('Attempted updating %dbresults records in table ' . $storage . ' from Google Analytics data %first-%second.', array(
+      '%dbresults' => 22,
+      '%first' => ($pointer - $chunk + 1),
+      '%second' => ($pointer - $chunk + 22)
+    ))->render(), []);
 
   // OK now increase or zero $step
   if ($pointer < $resultcount) {
-    // If there are more results than what we've reached with this chunk, increase step to look further during the next run.
-    $newstep = $step+1;
-    //dpm('step +1: '.$newstep);
+    // If there are more results than what we've reached with this chunk,
+    // increase step to look further during the next run.
+    $newstep = $step + 1;
   }
   else {
     $newstep = 0;
-    //dpm('step zero: '.$newstep);
   }
-  //dpm('newstep: '.$newstep);
-  variable_set('google_analytics_counter_node_data_step', $newstep);
-
-  // Record how long did this chunk take to process.
-  variable_set('google_analytics_counter_chunk_node_process_time', time()-$chunkprocessbegin);
-
+  $configEdit->set('google_analytics_counter.node_data_step', $newstep)
+    // Record how long did this chunk take to process.
+    ->set('google_analytics_counter.chunk_node_process_time', time() - $chunkprocessbegin)
+    ->save();
 }
