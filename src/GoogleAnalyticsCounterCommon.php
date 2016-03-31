@@ -8,6 +8,7 @@ namespace Drupal\google_analytics_counter;
 
 use Drupal\Component\Utility\SafeMarkup;
 use Symfony\Component\HttpFoundation\RedirectResponse;
+use Exception;
 
 /**
  * Class GoogleAnalyticsCounterCommon.
