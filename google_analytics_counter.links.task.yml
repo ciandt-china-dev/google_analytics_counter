@@ -5,7 +5,7 @@ google_analytics_counter.admin_settings_form_tab:
   base_route: google_analytics_counter.admin_settings_form
 
 google_analytics_counter.admin_dashboard_form_tab:
-  route_name: google_analytics_counter.admin_dashborad_form
+  route_name: google_analytics_counter.admin_dashboard_form
   title: 'Dashboard'
   weight: 2
   base_route: google_analytics_counter.admin_settings_form

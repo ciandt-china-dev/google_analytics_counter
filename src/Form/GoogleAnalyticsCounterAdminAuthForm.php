@@ -8,9 +8,14 @@ namespace Drupal\google_analytics_counter\Form;
 
 use Drupal\Core\Form\ConfigFormBase;
 use Drupal\Core\Form\FormStateInterface;
-use Drupal\google_analytics_counter\Library\GoogleAnalyticsCounterFeed;
+use Drupal\google_analytics_counter\GoogleAnalyticsCounterFeed;
+use Drupal\google_analytics_counter\GoogleAnalyticsCounterCommon;
 
-
+/**
+ * Class GoogleAnalyticsCounterAdminAuthForm.
+ *
+ * @package Drupal\google_analytics_counter\Form
+ */
 class GoogleAnalyticsCounterAdminAuthForm extends ConfigFormBase {
 
   /**
@@ -32,14 +37,16 @@ class GoogleAnalyticsCounterAdminAuthForm extends ConfigFormBase {
    */
   public function buildForm(array $form, FormStateInterface $form_state) {
     $form = array();
-    $config = \Drupal::config('google_analytics_counter.settings');
-    $account = google_analytics_counter_new_gafeed();
+    $config = $this->config('google_analytics_counter.settings');
+    $config_edit = \Drupal::configFactory()
+      ->getEditable('google_analytics_counter.settings');
+    $account = GoogleAnalyticsCounterCommon::newGaFeed();
 
     if ($account && $account->isAuthenticated()) {
       $webprops = $account->queryWebProperties()->results->items;
       $profiles = $account->queryProfiles()->results->items;
       $options = array();
-      $profile_id = $config->get('google_analytics_counter.profile_id');
+      $profile_id = $config->get('profile_id');
       $set_default = FALSE;
 
       // Add optgroups for each web property.
@@ -69,19 +76,15 @@ class GoogleAnalyticsCounterAdminAuthForm extends ConfigFormBase {
       }
 
       if ($set_default) {
-        \Drupal::configFactory()
-          ->getEditable('google_analytics_counter.settings')
-          ->set('google_analytics_counter.profile_id', $profile_id)
-          ->save();
+        $config_edit->set('profile_id', $profile_id)->save();
       }
 
       // Load current profile object.
       foreach ($profiles as $profile) {
         if ($profile->id == $profile_id) {
           $current_profile = $profile;
-          \Drupal::configFactory()
-            ->getEditable('google_analytics_counter.settings')
-            ->set('google_analytics_counter_default_page', isset($current_profile->defaultPage) ? '/' . $current_profile->defaultPage : '/')
+          $config_edit->set('google_analytics_counter_default_page',
+            isset($current_profile->defaultPage) ? '/' . $current_profile->defaultPage : '/')
             ->save();
           break;
         }
@@ -138,31 +141,30 @@ class GoogleAnalyticsCounterAdminAuthForm extends ConfigFormBase {
       $form['setup']['client_id'] = array(
         '#type' => 'textfield',
         '#title' => t('Client ID'),
-        '#default_value' => $config->get('google_analytics_counter.client_id'),
+        '#default_value' => $config->get('client_id'),
         '#size' => 30,
-        '#description' => t('Client ID created for the app in the access tab of the !google_link', array(
-          '!google_link' => \Drupal::l(t('Google API Console'), \Drupal\Core\Url::fromUri('http://code.google.com/apis/console')),
+        '#description' => t('Client ID created for the app in the access tab of the %google_link', array(
+          '%google_link' => \Drupal::l(t('Google API Console'), \Drupal\Core\Url::fromUri('http://code.google.com/apis/console')),
         )),
         '#weight' => -9,
       );
       $form['setup']['client_secret'] = array(
         '#type' => 'textfield',
         '#title' => t('Client Secret'),
-        '#default_value' => $config->get('google_analytics_counter.client_secret'),
+        '#default_value' => $config->get('client_secret'),
         '#size' => 30,
         '#description' => t('Client Secret created for the app in the Google API Console'),
         '#weight' => -8,
       );
 
-      $redirect_uri = $config->get('google_analytics_counter.redirect_uri');
+      $redirect_uri = $config->get('redirect_uri');
       if (empty($redirect_uri)) {
         $redirect_uri = GoogleAnalyticsCounterFeed::currentUrl();
       }
       $form['setup']['redirect_host'] = array(
         '#type' => 'textfield',
         '#title' => t('Redirect host'),
-        '#default_value' => \Drupal::config('google_analytics_counter.settings')
-          ->get('google_analytics_counter.redirect_host'),
+        '#default_value' => $config->get('redirect_host'),
         '#size' => 30,
         '#description' => t('Use to override the host for the callback uri (necessary on some servers, e.g. when using SSL and Varnish). Include schema and host, but not uri path. Example: http://example.com. Current redirect URI is %redirect_uri. Leave blank to use default (blank will work for most cases).',
           array(
@@ -183,17 +185,14 @@ class GoogleAnalyticsCounterAdminAuthForm extends ConfigFormBase {
 
   /**
    * Steps through the OAuth process, revokes tokens and saves profiles.
-   *
-   * @param array $form
-   * @param \Drupal\Core\Form\FormStateInterface $form_state
    */
   public function submitForm(array &$form, FormStateInterface $form_state) {
     if (empty($op = $form_state->getValue('op')->getUntranslatedString())) {
       $op = '';
     }
-    // @todo cache_clear_all('GoogleAnalyticsCounterFeed', 'cache', '*');
+    \Drupal::cache()->delete('GoogleAnalyticsCounterFeed');
     $config = $this->config('google_analytics_counter.settings');
-    $configEdit = \Drupal::configFactory()
+    $config_edit = \Drupal::configFactory()
       ->getEditable('google_analytics_counter.settings');
     switch ($op) {
       case 'Start setup and authorize account':
@@ -201,14 +200,14 @@ class GoogleAnalyticsCounterAdminAuthForm extends ConfigFormBase {
         $client_secret = $form_state->getValue('client_secret');
         $redirect_uri = GoogleAnalyticsCounterFeed::currentUrl();
         if (!empty($form_state->getValue('redirect_host'))) {
-          $config->set('google_analytics_counter.redirect_host', $form_state->getValue('redirect_host'))
+          $config->set('redirect_host', $form_state->getValue('redirect_host'))
             ->save();
           $redirect_uri = $form_state->getValue('redirect_host') . $_SERVER['REQUEST_URI'];
         }
 
-        $configEdit->set('google_analytics_counter.client_id', $client_id)
-          ->set('google_analytics_counter.client_secret', $client_secret)
-          ->set('google_analytics_counter.redirect_uri', $redirect_uri)
+        $config_edit->set('client_id', $client_id)
+          ->set('client_secret', $client_secret)
+          ->set('redirect_uri', $redirect_uri)
           ->save();
 
         $gafeed = new GoogleAnalyticsCounterFeed();
@@ -216,31 +215,18 @@ class GoogleAnalyticsCounterAdminAuthForm extends ConfigFormBase {
         break;
 
       case 'Save settings':
-        \Drupal::configFactory()
-          ->getEditable('google_analytics_counter.settings')
-          ->set('google_analytics_counter.profile_id', $form_state->getValue('google_analytics_counter_profile_id'))
+        $config_edit->set('profile_id',
+          $form_state->getValue('google_analytics_counter_profile_id'))
           ->save();
-        drupal_set_message(t('Settings have been saved successfully.'));
+        drupal_set_message($this->t('Settings have been saved successfully.'));
         break;
 
       case 'Revoke access token':
-        $this->google_analytics_counter_revoke();
+        GoogleAnalyticsCounterCommon::revoke();
         break;
     }
 
     parent::submitForm($form, $form_state);
   }
 
-
-  /**
-   * Programatically revoke token.
-   */
-  private function google_analytics_counter_revoke() {
-    $gafeed = google_analytics_counter_new_gafeed();
-    if ($gafeed->revokeToken()) {
-      \Drupal::configFactory()
-        ->getEditable('google_analytics_counter.settings')
-        ->reset();// @todo check it.
-    }
-  }
 }

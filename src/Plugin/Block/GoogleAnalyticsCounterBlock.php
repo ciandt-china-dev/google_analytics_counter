@@ -7,6 +7,7 @@
 namespace Drupal\google_analytics_counter\Plugin\Block;
 
 use Drupal\Core\Block\BlockBase;
+use Drupal\google_analytics_counter\GoogleAnalyticsCounterCommon;
 
 /**
  * Provides a 'count form' block.
@@ -22,7 +23,7 @@ class GoogleAnalyticsCounterBlock extends BlockBase {
    * {@inheritdoc}
    */
   public function build() {
-    $block_content = $this->counterDisplay();
+    $block_content = GoogleAnalyticsCounterCommon::displayGaCount();
     if ($block_content == '') {
       // If unknown, for some reason.
       // Instead of t('N/A'). Suppose better to use 0 because it's true,
@@ -31,31 +32,8 @@ class GoogleAnalyticsCounterBlock extends BlockBase {
       $block_content = 0;
     }
     return array(
-      '#markup' => $block_content
+      '#markup' => $block_content,
     );
   }
 
-  /**
-   * Displays the count.
-   */
-  private function counterDisplay($path = '') {
-    if ($path == '') {
-      // We need a path that includes the language prefix, if any. E.g. en/my/path (of /en/my/path - the initial slash will be dealt with later).
-      $path = parse_url("http://$_SERVER[HTTP_HOST]$_SERVER[REQUEST_URI]", PHP_URL_PATH); // @TODO: Works OK on non-Apache servers?
-    }
-
-    $block_content = '';
-    $block_content .= '<span class="google-analytics-counter">';
-    $count = google_analytics_counter_get_sum_per_path($path);
-    if ($count == '') {
-      // If unknown, for some reason.
-      $block_content .= 0; // Better than t('N/A').
-    }
-    else {
-      $block_content .= $count;
-    }
-    $block_content .= '</span>';
-
-    return $block_content;
-  }
 }

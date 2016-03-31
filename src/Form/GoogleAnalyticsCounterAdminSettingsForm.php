@@ -8,6 +8,7 @@ namespace Drupal\google_analytics_counter\Form;
 
 use Drupal\Core\Form\ConfigFormBase;
 use Drupal\Core\Form\FormStateInterface;
+use Drupal\Component\Utility\SafeMarkup;
 
 /* Seconds in an hour. */
 define('GOOGLE_ANALYTICS_COUNTER_HOUR', 60 * 60);
@@ -16,6 +17,11 @@ define('GOOGLE_ANALYTICS_COUNTER_DAY', GOOGLE_ANALYTICS_COUNTER_HOUR * 24);
 /* Seconds in a week. */
 define('GOOGLE_ANALYTICS_COUNTER_WEEK', GOOGLE_ANALYTICS_COUNTER_DAY * 7);
 
+/**
+ * Class GoogleAnalyticsCounterAdminSettingsForm.
+ *
+ * @package Drupal\google_analytics_counter\Form
+ */
 class GoogleAnalyticsCounterAdminSettingsForm extends ConfigFormBase {
 
   /**
@@ -38,7 +44,9 @@ class GoogleAnalyticsCounterAdminSettingsForm extends ConfigFormBase {
   public function buildForm(array $form, FormStateInterface $form_state) {
     $config = \Drupal::config('google_analytics_counter.settings');
     $defaultcroninterval = 30;
-    $chunk = 1000; // Could be up to 10000 but keeping the default low so that it works even for people without external cron.
+    // Could be up to 10000 but keeping the default low so that it works even
+    // for people without external cron.
+    $chunk = 1000;
     $dayquota = 10000;
 
     $times = array();
@@ -46,37 +54,35 @@ class GoogleAnalyticsCounterAdminSettingsForm extends ConfigFormBase {
     foreach ($intervals as $interval) {
       $times[] = $interval;
     }
-    $form['google_analytics_counter_cron_interval'] = array(
+    $form['cron_interval'] = array(
       '#type' => 'select',
       '#title' => t('Minimum time between Google Analytics data fetching'),
-      '#default_value' => \Drupal::config('google_analytics_counter.settings')
-        ->get('google_analytics_counter.cron_interval'),
-      '#description' => t('Google Analytics statistical data is fetched and processed via a cron job. If your cron runs too frequently, you may waste your GA daily quota too fast. Set here the minimum time that needs to elapse before the Google Analytics Counter cron runs (even if your cron job runs more frequently). Specify the time in <em>minutes</em>. Default: %defaultcroninterval minutes.', array('%defaultcroninterval' => \Drupal\Component\Utility\SafeMarkup::checkPlain($defaultcroninterval))),
+      '#default_value' => $config->get('cron_interval'),
+      '#description' => t('Google Analytics statistical data is fetched and processed via a cron job. If your cron runs too frequently, you may waste your GA daily quota too fast. Set here the minimum time that needs to elapse before the Google Analytics Counter cron runs (even if your cron job runs more frequently). Specify the time in <em>minutes</em>. Default: %defaultcroninterval minutes.', array('%defaultcroninterval' => SafeMarkup::checkPlain($defaultcroninterval))),
       '#options' => array_combine($times, $times),
       '#required' => TRUE,
     );
     $times = array();
-    $curquota = $config->get('google_analytics_counter.api_dayquota');
+    $curquota = $config->get('api_dayquota');
     for ($chunks = 1; $chunks <= $curquota / 1000; $chunks++) {
       $times[] = $chunks * 1000;
     }
-    $form['google_analytics_counter_chunk_to_fetch'] = array(
+    $form['chunk_to_fetch'] = array(
       '#type' => 'select',
       '#title' => t('Number of items to fetch from Google Analytics in one request'),
-      '#default_value' => \Drupal::config('google_analytics_counter.settings')
-        ->get('google_analytics_counter.chunk_to_fetch'),
-      '#description' => t('How many items will be fetched from Google Analytics in one request (during a cron run). The maximum allowed by Google is 10000. Default: %chunk items.', array('%chunk' => \Drupal\Component\Utility\SafeMarkup::checkPlain($chunk))),
+      '#default_value' => $config->get('chunk_to_fetch'),
+      '#description' => t('How many items will be fetched from Google Analytics in one request (during a cron run). The maximum allowed by Google is 10000. Default: %chunk items.', array('%chunk' => SafeMarkup::checkPlain($chunk))),
       '#options' => array_combine($times, $times),
       '#required' => TRUE,
     );
 
-    $form['google_analytics_counter_api_dayquota'] = array(
+    $form['api_dayquota'] = array(
       '#type' => 'textfield',
       '#title' => t('Maximum GA API requests per day'),
-      '#default_value' => $config->get('google_analytics_counter.api_dayquota'),
+      '#default_value' => $config->get('api_dayquota'),
       '#size' => 9,
       '#maxlength' => 9,
-      '#description' => t('This is the <em>daily limit</em> of requests <em>per profile</em> to the Google Analytics API. You don\'t need to change this value until Google relaxes their quota policy. Current value: %dayquota.<br />It is reasonable to expect that Google will increase this low number sooner rather than later, so watch the <a href="https://developers.google.com/analytics/devguides/reporting/core/v3/limits-quotas#discovery" target="_blank">quota</a> page for changes.<br />To get the full quota, you must <a href="https://developers.google.com/analytics/devguides/reporting/core/v3/limits-quotas#full_quota" target="_blank">register your Analytics API</a>.', array('%dayquota' => \Drupal\Component\Utility\SafeMarkup::checkPlain($dayquota))),
+      '#description' => t('This is the <em>daily limit</em> of requests <em>per profile</em> to the Google Analytics API. You don\'t need to change this value until Google relaxes their quota policy. Current value: %dayquota.<br />It is reasonable to expect that Google will increase this low number sooner rather than later, so watch the <a href="https://developers.google.com/analytics/devguides/reporting/core/v3/limits-quotas#discovery" target="_blank">quota</a> page for changes.<br />To get the full quota, you must <a href="https://developers.google.com/analytics/devguides/reporting/core/v3/limits-quotas#full_quota" target="_blank">register your Analytics API</a>.', array('%dayquota' => SafeMarkup::checkPlain($dayquota))),
       '#required' => TRUE,
     );
 
@@ -86,21 +92,23 @@ class GoogleAnalyticsCounterAdminSettingsForm extends ConfigFormBase {
       GOOGLE_ANALYTICS_COUNTER_WEEK * 4,
     );
 
-    $options = array_map(function($item){
-      return \Drupal::service('date.formatter')->formatInterval($item);
-    }, $times);
+    $date_formatter = \Drupal::service('date.formatter');
 
-    $options['all'] = t('All');
-    $form['google_analytics_counter_date_cycle'] = array(
+    $options = array_map(function ($item) use ($date_formatter) {
+      return $date_formatter->formatInterval($item);
+    }, $times);
+    $options = array_combine($times, $options);
+    $options['all'] = t('All')->render();
+    $form['date_cycle'] = array(
       '#type' => 'select',
       '#title' => t('Time range of statistics from Google analytics'),
-      '#description' => t('Get the time range of statistics for counter from Google analytics in past time.It don\'t include the time for today.'),
+      '#description' => t("Get the time range of statistics for pageviews from Google analytics in past time.It don't include the time for today except you choose all."),
       '#options' => $options,
-      '#default_value' => $config->get('google_analytics_counter.date_cycle'),
+      '#default_value' => $config->get('date_cycle'),
       '#required' => TRUE,
     );
 
-    // GA response cache options
+    // GA response cache options.
     $times = array();
     for ($hours = 1; $hours <= 24; $hours++) {
       $times[] = $hours * GOOGLE_ANALYTICS_COUNTER_HOUR;
@@ -111,55 +119,61 @@ class GoogleAnalyticsCounterAdminSettingsForm extends ConfigFormBase {
     for ($weeks = 1; $weeks <= 4; $weeks++) {
       $times[] = $weeks * GOOGLE_ANALYTICS_COUNTER_WEEK;
     }
-    $options = array_map(function($item){
-      return \Drupal::service('date.formatter')->formatInterval($item);
+    $options = array_map(function ($item) use ($date_formatter) {
+      return $date_formatter->formatInterval($item);
     }, $times);
-    $form['google_analytics_counter_cache_length'] = array(
+    $form['cache_length'] = array(
       '#type' => 'select',
       '#title' => t('Google Analytics query cache'),
       '#description' => t('Limit the minimum time to elapse between getting fresh data for the same query from Google Analytics. Defaults to 1 day.'),
-      '#options' => $options,
-      '#default_value' => $config->get('google_analytics_counter.cache_length'),
+      '#options' => array_combine($times, $options),
+      '#default_value' => $config->get('cache_length'),
       '#required' => TRUE,
     );
 
-    // If the statistics module is off, the own table storage MUST be used. See also https://www.drupal.org/node/2275575
+    // If the statistics module is off, the own table storage MUST be used.
+    // See also https://www.drupal.org/node/2275575
     if (!\Drupal::moduleHandler()->moduleExists('statistics')) {
       $default_value = 1;
     }
     else {
-      $default_value = \Drupal::config('google_analytics_counter.settings')
-        ->get('google_analytics_counter.storage');
+      $default_value = $config->get('storage');
     }
-    $form['google_analytics_counter_storage'] = array(
+    $form['storage'] = array(
       '#type' => 'radios',
       '#title' => t('Data storage location'),
       '#options' => array(
-        '1' => t('Use this module\'s database table. This is the recommended option.'),
+        '1' => t("Use this module's database table. This is the recommended option."),
         '0' => t('Overwrite total pageview values in table node_counter provided by the core module Statistics. If the Statistics module is disabled, this option gets deactivated as well. Only really useful for backward compatibility on sites that previously used version 7.2 or older and do not wish to change configuration (e.g. views) immediately. This option is deprecated.'),
       ),
       '#default_value' => $default_value,
       // For backward compatibility keeping it on the deprecated option.
       '#required' => TRUE,
-      //'#description' => t("")
+      // '#description' => t("").
     );
-    // Disable the Statistics option if the module is off. And force the own database table option.
+    // Disable the Statistics option if the module is off.
+    // And force the own database table option.
     if (!\Drupal::moduleHandler()->moduleExists('statistics')) {
-      $form['google_analytics_counter_storage'][0]['#disabled'] = TRUE; // See http://drupal.stackexchange.com/a/17550/196
+      // See http://drupal.stackexchange.com/a/17550/196
+      $form['storage'][0]['#disabled'] = TRUE;
     }
 
     return parent::buildForm($form, $form_state);
   }
 
+  /**
+   * {@inheritdoc}
+   */
   public function submitForm(array &$form, FormStateInterface $form_state) {
-    $config = $this->config('google_analytics_counter.settings');
-    $config
-      ->set('google_analytics_counter.cron_interval', $form_state->getValue('google_analytics_counter_cron_interval'))
-      ->set('google_analytics_counter.api_dayquota', $form_state->getValue('google_analytics_counter_api_dayquota'))
-      ->set('google_analytics_counter.date_cycle', $form_state->getValue('google_analytics_counter_date_cycle'))
-      ->set('google_analytics_counter.cache_length', $form_state->getValue('google_analytics_counter_cache_length'))
+    $this->config('google_analytics_counter.settings')
+      ->set('cron_interval', $form_state->getValue('cron_interval'))
+      ->set('api_dayquota', $form_state->getValue('api_dayquota'))
+      ->set('chunk_to_fetch', $form_state->getValue('chunk_to_fetch'))
+      ->set('date_cycle', $form_state->getValue('date_cycle'))
+      ->set('cache_length', $form_state->getValue('cache_length'))
       ->save();
 
     parent::submitForm($form, $form_state);
   }
+
 }

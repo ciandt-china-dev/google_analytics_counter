@@ -2,50 +2,49 @@ google_analytics_counter.settings:
   type: mapping
   label: Settings
   mapping:
-    google_analytics_counter:
-      access_token:
-        type: string
-      cache_length:
-        type: integer
-      date_cycle:
-        type: integer
-      dayquota:
-        type: mapping
-      expires_at:
-        type: 'NULL'
-      refresh_token:
-        type: string
-      client_id:
-        type: string
-      client_secret:
-        type: string
-      redirect_uri:
-        type: string
-      profile_id:
-        type: integer
-      redirect_host:
-        type: string
-      cron_interval:
-        type: integer
-      cron_next_execution:
-        type: integer
-      totalhits:
-        type: integer
-      totalpaths:
-        type: integer
-      totalnodes:
-        type: integer
-      storage:
-        type: integer
-      api_dayquota:
-        type: integer
-      chunk_process_time:
-        type: integer
-      chunk_node_process_time:
-        type: integer
-      chunk_to_fetch:
-        type: integer
-      data_step:
-        type: integer
-      node_data_step:
-        type: integer
+    access_token:
+      type: string
+    cache_length:
+      type: integer
+    date_cycle:
+      type: integer
+    dayquota:
+      type: mapping
+    expires_at:
+      type: integer
+    refresh_token:
+      type: string
+    client_id:
+      type: string
+    client_secret:
+      type: string
+    redirect_uri:
+      type: string
+    profile_id:
+      type: integer
+    redirect_host:
+      type: string
+    cron_interval:
+      type: integer
+    cron_next_execution:
+      type: integer
+    totalhits:
+      type: integer
+    totalpaths:
+      type: integer
+    totalnodes:
+      type: integer
+    storage:
+      type: integer
+    api_dayquota:
+      type: integer
+    chunk_process_time:
+      type: integer
+    chunk_node_process_time:
+      type: integer
+    chunk_to_fetch:
+      type: integer
+    data_step:
+      type: integer
+    node_data_step:
+      type: integer

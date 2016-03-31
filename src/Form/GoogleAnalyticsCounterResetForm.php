@@ -1,9 +1,16 @@
 <?php
+
+/**
+ * @file
+ * Contains \Drupal\google_analytics_counter\Form\GoogleAnalyticsCounterResetForm.
+ */
+
 namespace Drupal\google_analytics_counter\Form;
 
 use Drupal\Core\Form\ConfirmFormBase;
 use Drupal\Core\Url;
 use Drupal\Core\Form\FormStateInterface;
+use Drupal\google_analytics_counter\GoogleAnalyticsCounterCommon;
 
 /**
  * Defines a confirmation form for reset module data.
@@ -42,14 +49,14 @@ class GoogleAnalyticsCounterResetForm extends ConfirmFormBase {
    * {@inheritdoc}
    */
   public function getCancelUrl() {
-    return new Url('google_analytics_counter.admin_dashborad_form');
+    return new Url('google_analytics_counter.admin_dashboard_form');
   }
 
   /**
    * {@inheritdoc}
    */
   public function submitForm(array &$form, FormStateInterface $form_state) {
-    // @Todo upgrade
-    google_analytics_counter_revoke();
+    GoogleAnalyticsCounterCommon::revoke();
   }
+
 }

@@ -19,10 +19,9 @@ use Symfony\Component\HttpFoundation\RedirectResponse;
 class GoogleAnalyticsCounterController extends ControllerBase {
 
   /**
-   * Confirmation callback function for link admin/config/system/google_analytics_counter/dashboard/reset.
+   * Confirmation callback function.
    */
   public function reset() {
-    // @Todo check it.
     $form = new GoogleAnalyticsCounterResetForm();
     return \Drupal::formBuilder()->getForm($form);
   }
@@ -33,6 +32,7 @@ class GoogleAnalyticsCounterController extends ControllerBase {
   public function permissions() {
     $url = '/admin/people/permissions#module-google_analytics_counter';
     $redirect = new RedirectResponse($url);
-    $redirect->send();
+    return $redirect->send();
   }
+
 }
