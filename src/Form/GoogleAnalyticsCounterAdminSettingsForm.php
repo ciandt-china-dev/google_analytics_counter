@@ -98,11 +98,11 @@ class GoogleAnalyticsCounterAdminSettingsForm extends ConfigFormBase {
       return $date_formatter->formatInterval($item);
     }, $times);
     $options = array_combine($times, $options);
-    $options['all'] = t('All')->render();
+    $options[0] = t('All')->render();
     $form['date_cycle'] = array(
       '#type' => 'select',
       '#title' => t('Time range of statistics from Google analytics'),
-      '#description' => t("Get the time range of statistics for pageviews from Google analytics in past time.It don't include the time for today except you choose all."),
+      '#description' => t("Get the time range of statistics for pageviews from Google analytics in past time.<br />Note: Change the setting will clear counter data."),
       '#options' => $options,
       '#default_value' => $config->get('date_cycle'),
       '#required' => TRUE,
@@ -165,8 +165,12 @@ class GoogleAnalyticsCounterAdminSettingsForm extends ConfigFormBase {
    * {@inheritdoc}
    */
   public function submitForm(array &$form, FormStateInterface $form_state) {
-    $this->config('google_analytics_counter.settings')
-      ->set('cron_interval', $form_state->getValue('cron_interval'))
+    $config = $this->config('google_analytics_counter.settings');
+    if ($config->get('date_cycle') != $form_state->getValue('date_cycle')) {
+      db_delete('google_analytics_counter')->execute();
+      db_delete('google_analytics_counter_storage')->execute();
+    }
+    $config->set('cron_interval', $form_state->getValue('cron_interval'))
       ->set('api_dayquota', $form_state->getValue('api_dayquota'))
       ->set('chunk_to_fetch', $form_state->getValue('chunk_to_fetch'))
       ->set('date_cycle', $form_state->getValue('date_cycle'))
