@@ -207,17 +207,16 @@ class GoogleAnalyticsCounterCommon {
     }
 
     // Record how long did this chunk take to process.
-    $chunkprocessbegin = time();
+    $chunk_process_begin = time();
 
     // The total number of nodes.
-    $resultcount = db_select('node', 'n')
+    $result_count = db_select('node', 'n')
       ->fields('n')
       ->countQuery()
       ->execute()
       ->fetchField();
     // Store it in a variable.
-    $config_edit->set('totalnodes', $resultcount)
-      ->save();
+    $config_edit->set('totalnodes', $result_count)->save();
 
     // How many node counts to update one cron run.
     // We use the same chunk size as when getting paths in
@@ -229,12 +228,12 @@ class GoogleAnalyticsCounterCommon {
     // Which node to look for first. Must be between 0 - infinity.
     $pointer = $step * $chunk;
 
-    $dbresults = db_select('node', 'n')
+    $db_results = db_select('node', 'n')
       ->fields('n', array('nid'))
       ->range($pointer, $chunk)
       ->execute();
-    foreach ($dbresults as $dbresult) {
-      $path = 'node/' . $dbresult->nid;
+    foreach ($db_results as $db_result) {
+      $path = '/node/' . $db_result->nid;
 
       // Get the count for this node (uncached).
       $sum_of_pageviews = self::getSumPerPath($path, FALSE);
@@ -247,7 +246,7 @@ class GoogleAnalyticsCounterCommon {
       // Write the count to the current storage table.
       if ($storage == 'node_counter') {
         db_merge('node_counter')
-          ->key(array('nid' => $dbresult->nid))
+          ->key(array('nid' => $db_result->nid))
           ->fields(array(
             'daycount' => 0,
             'totalcount' => $sum_of_pageviews,
@@ -257,7 +256,7 @@ class GoogleAnalyticsCounterCommon {
       }
       else {
         db_merge('google_analytics_counter_storage')
-          ->key(array('nid' => $dbresult->nid))
+          ->key(array('nid' => $db_result->nid))
           ->fields(array(
             'pageview_total' => $sum_of_pageviews,
           ))
@@ -277,7 +276,7 @@ class GoogleAnalyticsCounterCommon {
       ))->render());
 
     // OK now increase or zero $step.
-    if ($pointer < $resultcount) {
+    if ($pointer < $result_count) {
       // If there are more results than what we've reached with this chunk,
       // increase step to look further during the next run.
       $newstep = $step + 1;
@@ -287,7 +286,7 @@ class GoogleAnalyticsCounterCommon {
     }
     $config_edit->set('node_data_step', $newstep)
       // Record how long did this chunk take to process.
-      ->set('chunk_node_process_time', time() - $chunkprocessbegin)
+      ->set('chunk_node_process_time', time() - $chunk_process_begin)
       ->save();
   }
 
@@ -447,11 +446,6 @@ class GoogleAnalyticsCounterCommon {
     // Esp. in case function is called directly.
     $path = SafeMarkup::checkPlain($path)->jsonSerialize();
 
-    // Remove initial slash, if any.
-    if (substr($path, 0, 1) == '/') {
-      $path = substr($path, 1);
-    }
-
     // Get list of allowed languages to detect front pages
     // such as http://mydomain.tld/en.
     // Must come AFTER the possible initial slash is removed!
@@ -469,33 +463,32 @@ class GoogleAnalyticsCounterCommon {
 
     // If it's a node we'll distinguish the language part of it, if any.
     // Either format en/node/55 or node/55.
-    $path_no_slashes_at_ends = trim($path, '/');
-    $splitpath = explode('/', $path_no_slashes_at_ends);
+    $split_path = explode('/', trim($path, '/'));
     $lang_prefix = '';
-    if ((count($splitpath) == 3 and strlen($splitpath[0]) == 2
-        and $splitpath[1] == 'node' and is_numeric($splitpath[2]))
+    if ((count($split_path) == 3 and strlen($split_path[0]) == 2
+        and $split_path[1] == 'node' and is_numeric($split_path[2]))
       or
-      (count($splitpath) == 2 and $splitpath[0] == 'node' and is_numeric($splitpath[1]))
+      (count($split_path) == 2 and $split_path[0] == 'node' and is_numeric($split_path[1]))
     ) {
-      if (count($splitpath) == 3) {
-        $nidhere = $splitpath[2];
+      if (count($split_path) == 3) {
+        $nidhere = $split_path[2];
       }
       else {
-        if (count($splitpath) == 2) {
-          $nidhere = $splitpath[1];
+        if (count($split_path) == 2) {
+          $nidhere = $split_path[1];
         }
       }
-      $dbresults = db_select('node', 'n')
+      $db_results = db_select('node', 'n')
         ->fields('n', array('nid', 'langcode'))
         ->condition('nid', $nidhere, '=')
         ->execute();
-      foreach ($dbresults as $dbresult) {
-        if ($dbresult->langcode <> 'und' and $dbresult->langcode <> '') {
-          $lang_prefix = $dbresult->langcode . '/';
+      foreach ($db_results as $db_result) {
+        if ($db_result->langcode <> 'und' and $db_result->langcode <> '') {
+          $lang_prefix = $db_result->langcode;
           // If this is a language-prefixed node we need its path without
           // the prefix for later.
-          if (count($splitpath) == 3) {
-            $path = $splitpath[1] . '/' . $splitpath[2];
+          if (count($split_path) == 3) {
+            $path = '/' . $split_path[1] . '/' . $split_path[2];
           }
         }
         // Is just 1 result anyway.
@@ -503,49 +496,42 @@ class GoogleAnalyticsCounterCommon {
       }
     }
 
-    // Now if it's a node but has a prefixed or unprefixed alias,
-    // e.g. en/my/path or my/path, we should also try to determine
-    // if it's a node and then count it's node/nid with it!
     if ($lang_prefix == '') {
       // E.g. en/view or nl/my/view or xx/view.
-      if (count($splitpath) > 1 and strlen($splitpath[0]) == 2 and !is_numeric($splitpath[0])) {
+      if (count($split_path) > 1 and strlen($split_path[0]) == 2 and !is_numeric($split_path[0])) {
 
         // Now we need to find which nid does it correspond
         // (the language prefix + the alias).
-        $withoutprefix = $splitpath;
-        $lang = array_shift($withoutprefix);
-        $withoutprefix = implode('/', $withoutprefix);
-        $nodepath = \Drupal::service('path.alias_manager')
-          ->getPathByAlias($withoutprefix);
-        if ($nodepath !== FALSE) {
-          $path = $nodepath;
-          $lang_prefix = $lang . '/';
+        $without_prefix = $split_path;
+        $lang = array_shift($without_prefix);
+        $without_prefix = '/' . implode('/', $without_prefix);
+        $node_path = \Drupal::service('path.alias_manager')
+          ->getPathByAlias($without_prefix);
+        if ($node_path !== FALSE) {
+          $path = $node_path;
+          $lang_prefix = $lang;
         }
       }
-    }
 
-    // Now, it's also possible that it's a node alias but without prefix!
-    // E.g. my/path but in fact it's en/node/nid!
-    if ($lang_prefix == '') {
-      $path_no_slashes_at_ends = trim($path, '/');
-      $nodepath = \Drupal::service('path.alias_manager')
-        ->getPathByAlias($path_no_slashes_at_ends);
-      if ($nodepath !== FALSE) {
-        $path = $nodepath;
-        $splitnodepath = explode('/', $nodepath);
-        if (count($splitnodepath) == 2 and $splitnodepath[0] == 'node' and is_numeric($splitnodepath[1])) {
-          $dbresults = db_select('node', 'n')
+      // Now, it's also possible that it's a node alias but without prefix!
+      // E.g. my/path but in fact it's en/node/nid!
+      $node_path = \Drupal::service('path.alias_manager')
+        ->getPathByAlias($path);
+      if ($node_path !== FALSE) {
+        $path = $node_path;
+        $split_node_path = explode('/', $node_path);
+        if (count($split_node_path) == 2 and $split_node_path[0] == 'node' and is_numeric($split_node_path[1])) {
+          $db_results = db_select('node', 'n')
             ->fields('n', array('nid', 'langcode'))
-            ->condition('nid', $splitnodepath[1], '=')
+            ->condition('nid', $split_node_path[1], '=')
             ->execute();
-          foreach ($dbresults as $dbresult) {
-            if ($dbresult->langcode <> 'und' and $dbresult->langcode <> '') {
-              $lang_prefix = $dbresult->langcode . '/';
+          foreach ($db_results as $db_result) {
+            if ($db_result->langcode <> 'und' and $db_result->langcode <> '') {
+              $lang_prefix = $db_result->langcode;
             }
             // Is just 1 result anyway.
             break;
           }
-          // $lang_prefix = $lang.'/';.
         }
       }
     }
@@ -560,7 +546,7 @@ class GoogleAnalyticsCounterCommon {
           $path = $redirect_object->redirect;
         }
         if (is_string($redirect_object->language)) {
-          $lang_prefix = $redirect_object->language . '/';
+          $lang_prefix = $redirect_object->language;
         }
       }
     }
@@ -568,7 +554,6 @@ class GoogleAnalyticsCounterCommon {
     // All right, finally we can calculate the sum of pageviews.
     // This process is cached.
     $cacheid = md5($lang_prefix . $path);
-    // $cacheon = FALSE; // Useful for debugging.
     if ($cache = \Drupal::cache()
         ->get('google_analytics_counter_page_' . $cacheid) and $cacheon
     ) {
@@ -580,8 +565,7 @@ class GoogleAnalyticsCounterCommon {
       // from either check_plain($_GET['q']) (block) or from a tag like
       // [gac|node/N]. Remove a trailing slash (e.g. from node/3/) otherwise
       // _google_analytics_counter_path_aliases() does not find anything.
-      $path_no_slashes_at_ends = trim($path, '/');
-      $unprefixedaliases = self::pathAliases($path_no_slashes_at_ends);
+      $unprefixedaliases = self::pathAliases($path);
       $allpaths = array();
       $allpaths_dpm = array();
       foreach ($unprefixedaliases as $val) {
@@ -607,12 +591,12 @@ class GoogleAnalyticsCounterCommon {
           // while prefix before node/id does not change the page
           // (it's the same node), with views or other custom pages the prefix
           // may actually contain completely different content.
-          $allpaths[] = md5('/' . $val);
-          $allpaths_dpm[] = '/' . $val;
+          $allpaths[] = md5($val);
+          $allpaths_dpm[] = $val;
           // And its variant with trailing slash
           // (https://www.drupal.org/node/2396057).
-          $allpaths[] = md5('/' . $val . '/');
-          $allpaths_dpm[] = '/' . $val . '/';
+          $allpaths[] = md5($val . '/');
+          $allpaths_dpm[] = $val . '/';
           // @TODO ... obviously, here we should treat the possibility of the NODE/nid having a different language prefix. A niche case (how often do existing NODES change language?)
         }
       }
@@ -622,8 +606,7 @@ class GoogleAnalyticsCounterCommon {
       // @todo Redirect module is currently being ported to Drupal 8,
       // @todo but is not usable yet.
       if (function_exists('redirect_load_multiple')) {
-        $path_no_slashes_at_ends = trim($path, '/');
-        $redirectobjects = redirect_load_multiple(FALSE, array('redirect' => $path_no_slashes_at_ends));
+        $redirectobjects = redirect_load_multiple(FALSE, array('redirect' => $path));
         foreach ($redirectobjects as $redirectobject) {
           $allpaths[] = md5('/' . $redirectobject->source);
           $allpaths_dpm[] = '/' . $redirectobject->source;
