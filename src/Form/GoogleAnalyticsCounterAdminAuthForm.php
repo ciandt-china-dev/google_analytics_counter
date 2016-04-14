@@ -83,8 +83,7 @@ class GoogleAnalyticsCounterAdminAuthForm extends ConfigFormBase {
       foreach ($profiles as $profile) {
         if ($profile->id == $profile_id) {
           $current_profile = $profile;
-          $config_edit->set('google_analytics_counter_default_page',
-            isset($current_profile->defaultPage) ? '/' . $current_profile->defaultPage : '/')
+          $config_edit->set('default_page', isset($current_profile->defaultPage) ? '/' . $current_profile->defaultPage : '/')
             ->save();
           break;
         }
@@ -98,7 +97,7 @@ class GoogleAnalyticsCounterAdminAuthForm extends ConfigFormBase {
         '#weight' => 1,
       );
 
-      $form['ga']['google_analytics_counter_profile_id'] = array(
+      $form['ga']['profile_id'] = array(
         '#type' => 'select',
         '#title' => t('Reports profile'),
         '#options' => $options,
@@ -110,7 +109,7 @@ class GoogleAnalyticsCounterAdminAuthForm extends ConfigFormBase {
       );
 
       if (!empty($options) || $options[0]) {
-        $form['ga']['google_analytics_counter_profile_id']['#required'] = TRUE;
+        $form['ga']['profile_id']['#required'] = TRUE;
       }
       $form['ga']['settings_submit'] = array(
         '#type' => 'submit',
@@ -216,7 +215,7 @@ class GoogleAnalyticsCounterAdminAuthForm extends ConfigFormBase {
 
       case 'Save settings':
         $config_edit->set('profile_id',
-          $form_state->getValue('google_analytics_counter_profile_id'))
+          $form_state->getValue('profile_id'))
           ->save();
         drupal_set_message($this->t('Settings have been saved successfully.'));
         break;

@@ -366,7 +366,7 @@ class GoogleAnalyticsCounterCommon {
     if (!$new_data->fromCache) {
 
       // This was a live request. Increase the GA request limit tracker.
-      $config_edit->set('google_analytics_counter.dayquota', array(
+      $config_edit->set('dayquota', array(
         $dayquota[0],
         ($dayquota[1] + 1),
       ))

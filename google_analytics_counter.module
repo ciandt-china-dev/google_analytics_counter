@@ -11,11 +11,6 @@ use Drupal\Core\Link;
 use Drupal\google_analytics_counter\GoogleAnalyticsCounterCommon;
 
 /**
- * Load the necessary include files.
- */
-module_load_include('inc', 'google_analytics_counter', 'google_analytics_counter_data');
-
-/**
  * Implements hook_help().
  */
 function google_analytics_counter_help($route_name, RouteMatchInterface $route_match) {
