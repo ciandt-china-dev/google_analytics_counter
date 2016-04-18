@@ -519,7 +519,7 @@ class GoogleAnalyticsCounterCommon {
         ->getPathByAlias($path);
       if ($node_path !== FALSE) {
         $path = $node_path;
-        $split_node_path = explode('/', $node_path);
+        $split_node_path = explode('/', trim($node_path, "/"));
         if (count($split_node_path) == 2 and $split_node_path[0] == 'node' and is_numeric($split_node_path[1])) {
           $db_results = db_select('node', 'n')
             ->fields('n', array('nid', 'langcode'))
@@ -571,13 +571,14 @@ class GoogleAnalyticsCounterCommon {
       foreach ($unprefixedaliases as $val) {
         // Google Analytics stores initial slash as well, so let's prefix them.
         // With language prefix, if available, e.g. /en/node/55.
-        $allpaths[] = md5('/' . $lang_prefix . $val);
-        $allpaths_dpm[] = '/' . $lang_prefix . $val;
+        $url_lang = empty($lang_prefix) ? '' : '/' . $lang_prefix;
+        $allpaths[] = md5($url_lang . $val);
+        $allpaths_dpm[] = $url_lang . $val;
         // And its variant with trailing slash
         // (https://www.drupal.org/node/2396057).
         // With language prefix, if available, e.g. /en/node/55.
-        $allpaths[] = md5('/' . $lang_prefix . $val . '/');
-        $allpaths_dpm[] = '/' . $lang_prefix . $val . '/';
+        $allpaths[] = md5($url_lang . $val . '/');
+        $allpaths_dpm[] = $url_lang . $val . '/';
         if ($lang_prefix <> '') {
           // Now, if we are counting NODE with language prefix, we also need to
           // count the pageviews for that node without the prefix --
